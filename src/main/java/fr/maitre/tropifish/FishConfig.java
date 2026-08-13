@@ -20,11 +20,17 @@ public class FishConfig {
     public boolean pauseWhenScreenOpen = true;
     /** Detection de secours basee sur la vitesse du bouchon. */
     public boolean useVelocityFallback = true;
+    /** Detection de secours basee sur la chute de position du bouchon. */
+    public boolean usePositionFallback = true;
+
+    /** Ticks pose dans l'eau avant d'autoriser les detections de secours. */
+    public int settleTicksRequired = 20;
+    /** Chute de position (blocs/tick) au-dela de laquelle on considere une touche. */
+    public double positionDropThreshold = 0.035D;
+    /** Vitesse verticale au-dela de laquelle on considere une touche. */
+    public double velocityThreshold = 0.09D;
     /** Messages dans le chat lors des activations/coupures. */
     public boolean chatMessages = true;
-    /** Affiche dans le chat tous les sons joues a moins de 8 blocs du bouchon. */
-    public boolean debugSounds = false;
-
     /**
      * Identifiants d'objets a traiter comme des cannes, en plus des cannes
      * vanilla et de toutes les cannes Cobblemon (cobblemon:*_rod).

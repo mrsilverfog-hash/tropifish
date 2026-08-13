@@ -2,6 +2,7 @@ package fr.maitre.tropifish;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.projectile.FishingBobberEntity;
 import net.minecraft.item.FishingRodItem;
 import net.minecraft.item.ItemStack;
@@ -11,7 +12,10 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
 import java.util.Random;
 
 /**
@@ -34,13 +38,12 @@ public final class AutoFisher {
     private static final int GRACE_TICKS = 8;
 
     private static boolean enabled = false;
+    private static boolean debug = false;
 
     private static Action pending = Action.NONE;
     private static int cooldown = 0;
 
-    /** Ticks ecoules depuis que le bouchon est en vol/dans l'eau. */
     private static int waitTicks = 0;
-    /** Ticks pendant lesquels le bouchon est pose dans l'eau, sans bouger. */
     private static int settleTicks = 0;
 
     private static int catches = 0;
@@ -52,8 +55,19 @@ public final class AutoFisher {
     private static volatile double splashY;
     private static volatile double splashZ;
 
-    /** File des sons captes en mode debug, videe dans le tick. */
-    private static final Deque<String> DEBUG_SOUNDS = new ArrayDeque<>();
+    // --- suivi du bouchon ---
+    private static int trackedBobberId = -1;
+    private static double lastY = Double.NaN;
+    private static double lastDy = 0.0D;
+    private static double minDy = 0.0D;
+    private static double minVy = 0.0D;
+
+    // --- diagnostics ---
+    private static final Deque<String> SOUND_LOG = new ArrayDeque<>();
+    private static String lastRodId = "-";
+    private static String lastHookId = "-";
+    private static String lastHookSource = "-";
+    private static boolean lastInWater = false;
 
     // ------------------------------------------------------------------
     // API publique
@@ -61,6 +75,10 @@ public final class AutoFisher {
 
     public static boolean isEnabled() {
         return enabled;
+    }
+
+    public static boolean isDebug() {
+        return debug;
     }
 
     public static int getCatchCount() {
@@ -73,6 +91,14 @@ public final class AutoFisher {
 
     public static void toggle() {
         setEnabled(!enabled);
+    }
+
+    public static void toggleDebug() {
+        debug = !debug;
+        synchronized (SOUND_LOG) {
+            SOUND_LOG.clear();
+        }
+        say("\u00a7bTropiFish \u00a77diagnostic : " + (debug ? "\u00a7aON" : "\u00a7cOFF"));
     }
 
     public static void setEnabled(boolean value) {
@@ -89,21 +115,22 @@ public final class AutoFisher {
         }
     }
 
-    /** Appele depuis le mixin quand le serveur joue le son d'eclaboussure. */
-    public static void notifySplash(double x, double y, double z) {
-        splashX = x;
-        splashY = y;
-        splashZ = z;
-        splashFlag = true;
-    }
-
-    /** Appele depuis le mixin en mode debug, pour tout son recu. */
-    public static void notifyDebugSound(String id, double x, double y, double z) {
+    /** Appele depuis le mixin pour chaque son recu. */
+    public static void notifySound(String id, double x, double y, double z) {
+        if (SPLASH_ID.equals(id)) {
+            splashX = x;
+            splashY = y;
+            splashZ = z;
+            splashFlag = true;
+        }
+        if (!debug) {
+            return;
+        }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.player == null) {
             return;
         }
-        FishingBobberEntity bobber = mc.player.fishHook;
+        FishingBobberEntity bobber = findBobber(mc, mc.player);
         if (bobber == null) {
             return;
         }
@@ -111,34 +138,50 @@ public final class AutoFisher {
         double dy = bobber.getY() - y;
         double dz = bobber.getZ() - z;
         double dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 > 64.0D) {
+        if (dist2 > 100.0D) {
             return;
         }
-        synchronized (DEBUG_SOUNDS) {
-            if (DEBUG_SOUNDS.size() < 40) {
-                DEBUG_SOUNDS.add(id + " \u00a78(" + String.format("%.1f", Math.sqrt(dist2)) + "m)");
+        String line = String.format(Locale.ROOT, "%s (%.1fm)", id, Math.sqrt(dist2));
+        synchronized (SOUND_LOG) {
+            SOUND_LOG.addFirst(line);
+            while (SOUND_LOG.size() > 6) {
+                SOUND_LOG.removeLast();
             }
         }
     }
+
+    public static final String SPLASH_ID = "minecraft:entity.fishing_bobber.splash";
 
     // ------------------------------------------------------------------
     // Boucle principale
     // ------------------------------------------------------------------
 
     public static void tick(MinecraftClient mc) {
-        drainDebugSounds();
-
-        if (!enabled) {
-            return;
-        }
-
         ClientPlayerEntity player = mc.player;
+
         if (player == null || mc.world == null || mc.interactionManager == null) {
-            resetState();
+            if (enabled) {
+                resetState();
+            }
             return;
         }
 
         FishConfig cfg = TropiFishClient.config;
+
+        // Le suivi du bouchon tourne aussi en diagnostic seul, mod coupe.
+        FishingBobberEntity bobber = findBobber(mc, player);
+        updateTracking(bobber);
+
+        if (debug) {
+            ItemStack main = player.getMainHandStack();
+            ItemStack off = player.getOffHandStack();
+            ItemStack rod = isRod(main) ? main : (isRod(off) ? off : (main.isEmpty() ? off : main));
+            lastRodId = rod.isEmpty() ? "(vide)" : Registries.ITEM.getId(rod.getItem()).toString();
+        }
+
+        if (!enabled) {
+            return;
+        }
 
         if (cfg.pauseWhenScreenOpen && mc.currentScreen != null) {
             stateLabel = "en pause (menu)";
@@ -160,13 +203,11 @@ public final class AutoFisher {
             }
         }
 
-        // Fenetre de securite apres un clic
         if (cooldown > 0) {
             cooldown--;
             return;
         }
 
-        // Action programmee arrivee a echeance
         if (pending != Action.NONE) {
             Action action = pending;
             pending = Action.NONE;
@@ -175,6 +216,7 @@ public final class AutoFisher {
             waitTicks = 0;
             settleTicks = 0;
             splashFlag = false;
+            resetTracking();
             if (action == Action.REEL && reelIsCatch) {
                 catches++;
             }
@@ -183,9 +225,6 @@ public final class AutoFisher {
             return;
         }
 
-        FishingBobberEntity bobber = player.fishHook;
-
-        // Pas de bouchon : il faut lancer
         if (bobber == null || bobber.isRemoved()) {
             stateLabel = "lancer...";
             schedule(Action.CAST, cfg.castMinTicks, cfg.castMaxTicks);
@@ -195,41 +234,192 @@ public final class AutoFisher {
         waitTicks++;
         stateLabel = "attente";
 
-        // 1) Detection principale : son d'eclaboussure pres du bouchon
+        // 1) Son d'eclaboussure pres du bouchon
         if (splashFlag) {
             splashFlag = false;
             double dx = bobber.getX() - splashX;
             double dy = bobber.getY() - splashY;
             double dz = bobber.getZ() - splashZ;
             if (dx * dx + dy * dy + dz * dz <= 6.0D) {
-                reelIsCatch = true;
-                stateLabel = "touche !";
-                schedule(Action.REEL, cfg.reactionMinTicks, cfg.reactionMaxTicks);
+                bite("son");
                 return;
             }
         }
 
-        // 2) Filet de securite : le bouchon plonge d'un coup
-        if (bobber.isTouchingWater()) {
+        boolean inWater = bobber.isTouchingWater();
+        lastInWater = inWater;
+
+        if (inWater) {
             settleTicks++;
+
+            // 2) Chute soudaine de la position (le bouchon plonge)
+            if (cfg.usePositionFallback
+                    && settleTicks > cfg.settleTicksRequired
+                    && lastDy < -cfg.positionDropThreshold) {
+                bite("position");
+                return;
+            }
+
+            // 3) Vitesse negative envoyee par le serveur
             if (cfg.useVelocityFallback
-                    && settleTicks > 25
-                    && bobber.getVelocity().y < -0.09D) {
-                reelIsCatch = true;
-                stateLabel = "touche ! (vitesse)";
-                schedule(Action.REEL, cfg.reactionMinTicks, cfg.reactionMaxTicks);
+                    && settleTicks > cfg.settleTicksRequired
+                    && bobber.getVelocity().y < -cfg.velocityThreshold) {
+                bite("vitesse");
                 return;
             }
         } else {
             settleTicks = 0;
         }
 
-        // 3) Bouchon coince / touche ratee : on relance
+        // 4) Bouchon coince / touche ratee : on relance
         if (waitTicks > cfg.timeoutSeconds * 20) {
             reelIsCatch = false;
             stateLabel = "relance (timeout)";
             schedule(Action.REEL, 1, 3);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Suivi / detection
+    // ------------------------------------------------------------------
+
+    private static void bite(String source) {
+        reelIsCatch = true;
+        stateLabel = "touche ! (" + source + ")";
+        FishConfig cfg = TropiFishClient.config;
+        schedule(Action.REEL, cfg.reactionMinTicks, cfg.reactionMaxTicks);
+    }
+
+    /**
+     * Cherche le bouchon du joueur. Utilise player.fishHook quand il est
+     * renseigne, sinon balaie les entites proches : certaines cannes moddees
+     * ne remplissent pas ce champ cote client.
+     */
+    private static FishingBobberEntity findBobber(MinecraftClient mc, ClientPlayerEntity player) {
+        FishingBobberEntity hook = player.fishHook;
+        if (hook != null && !hook.isRemoved()) {
+            lastHookSource = "fishHook";
+            lastHookId = Registries.ENTITY_TYPE.getId(hook.getType()).toString();
+            return hook;
+        }
+        if (mc.world == null) {
+            lastHookSource = "-";
+            lastHookId = "-";
+            return null;
+        }
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof FishingBobberEntity candidate) || candidate.isRemoved()) {
+                continue;
+            }
+            if (candidate.getOwner() == player || candidate.getPlayerOwner() == player) {
+                lastHookSource = "scan";
+                lastHookId = Registries.ENTITY_TYPE.getId(candidate.getType()).toString();
+                return candidate;
+            }
+        }
+        lastHookSource = "-";
+        lastHookId = "-";
+        return null;
+    }
+
+    private static void updateTracking(FishingBobberEntity bobber) {
+        if (bobber == null) {
+            resetTracking();
+            return;
+        }
+        if (bobber.getId() != trackedBobberId) {
+            trackedBobberId = bobber.getId();
+            lastY = bobber.getY();
+            lastDy = 0.0D;
+            minDy = 0.0D;
+            minVy = 0.0D;
+            return;
+        }
+        double y = bobber.getY();
+        if (!Double.isNaN(lastY)) {
+            lastDy = y - lastY;
+            if (lastDy < minDy) {
+                minDy = lastDy;
+            }
+        }
+        lastY = y;
+        double vy = bobber.getVelocity().y;
+        if (vy < minVy) {
+            minVy = vy;
+        }
+    }
+
+    private static void resetTracking() {
+        trackedBobberId = -1;
+        lastY = Double.NaN;
+        lastDy = 0.0D;
+        minDy = 0.0D;
+        minVy = 0.0D;
+    }
+
+    // ------------------------------------------------------------------
+    // Diagnostic
+    // ------------------------------------------------------------------
+
+    public static List<String> getDebugLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add("\u00a7ecanne \u00a7f" + lastRodId);
+        lines.add("\u00a7ehook  \u00a7f" + lastHookId + " \u00a78via " + lastHookSource);
+        lines.add(String.format(Locale.ROOT,
+                "\u00a7eeau   \u00a7f%s  \u00a7edy \u00a7f%+.4f  \u00a7evy \u00a7f%+.4f",
+                lastInWater, lastDy, currentVy()));
+        lines.add(String.format(Locale.ROOT,
+                "\u00a7emin   \u00a7edy \u00a7f%+.4f  \u00a7evy \u00a7f%+.4f",
+                minDy, minVy));
+        lines.add("\u00a7eticks \u00a7fattente " + waitTicks + "  settle " + settleTicks);
+        lines.add("\u00a7eetat  \u00a7f" + stateLabel);
+        synchronized (SOUND_LOG) {
+            if (SOUND_LOG.isEmpty()) {
+                lines.add("\u00a78(aucun son capte pres du bouchon)");
+            } else {
+                for (String s : SOUND_LOG) {
+                    lines.add("\u00a7b> \u00a7f" + s);
+                }
+            }
+        }
+        return lines;
+    }
+
+    private static double currentVy() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) {
+            return 0.0D;
+        }
+        FishingBobberEntity bobber = findBobber(mc, mc.player);
+        return bobber == null ? 0.0D : bobber.getVelocity().y;
+    }
+
+    // ------------------------------------------------------------------
+    // Canne
+    // ------------------------------------------------------------------
+
+    public static boolean isRod(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        if (stack.getItem() instanceof FishingRodItem) {
+            return true;
+        }
+        Identifier id = Registries.ITEM.getId(stack.getItem());
+        if (TropiFishClient.config.extraRodIds.contains(id.toString())) {
+            return true;
+        }
+        return "cobblemon".equals(id.getNamespace()) && id.getPath().endsWith("_rod");
+    }
+
+    private static Hand findRodHand(ClientPlayerEntity player) {
+        if (isRod(player.getMainHandStack())) {
+            return Hand.MAIN_HAND;
+        }
+        if (isRod(player.getOffHandStack())) {
+            return Hand.OFF_HAND;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------
@@ -255,54 +445,6 @@ public final class AutoFisher {
         player.swingHand(hand);
     }
 
-    /**
-     * Reconnait les cannes vanilla ET les Poke Cannes Cobblemon
-     * (cobblemon:roseate_rod, poke_rod, etc.), sans dependance de compilation
-     * sur Cobblemon.
-     */
-    public static boolean isRod(ItemStack stack) {
-        if (stack.isEmpty()) {
-            return false;
-        }
-        if (stack.getItem() instanceof FishingRodItem) {
-            return true;
-        }
-        Identifier id = Registries.ITEM.getId(stack.getItem());
-        if (TropiFishClient.config.extraRodIds.contains(id.toString())) {
-            return true;
-        }
-        return "cobblemon".equals(id.getNamespace()) && id.getPath().endsWith("_rod");
-    }
-
-    private static Hand findRodHand(ClientPlayerEntity player) {
-        if (isRod(player.getMainHandStack())) {
-            return Hand.MAIN_HAND;
-        }
-        if (isRod(player.getOffHandStack())) {
-            return Hand.OFF_HAND;
-        }
-        return null;
-    }
-
-    private static void drainDebugSounds() {
-        if (!TropiFishClient.config.debugSounds) {
-            synchronized (DEBUG_SOUNDS) {
-                DEBUG_SOUNDS.clear();
-            }
-            return;
-        }
-        while (true) {
-            String entry;
-            synchronized (DEBUG_SOUNDS) {
-                entry = DEBUG_SOUNDS.poll();
-            }
-            if (entry == null) {
-                return;
-            }
-            say("\u00a78[son] \u00a7f" + entry);
-        }
-    }
-
     private static void disable(String reason) {
         enabled = false;
         resetState();
@@ -317,6 +459,7 @@ public final class AutoFisher {
         settleTicks = 0;
         reelIsCatch = false;
         splashFlag = false;
+        resetTracking();
     }
 
     private static void say(String message) {

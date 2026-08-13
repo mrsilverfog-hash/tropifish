@@ -1,4 +1,5 @@
 {
   "key.tropifish.toggle": "Activer/desactiver la peche auto",
-  "category.tropifish": "TropiFish"
+  "category.tropifish": "TropiFish",
+  "key.tropifish.debug": "Afficher le diagnostic"
 }

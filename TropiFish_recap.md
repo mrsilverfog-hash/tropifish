@@ -31,10 +31,27 @@ Machine a etats dans `AutoFisher.tick()`, appelee a chaque tick client :
 - tout id liste dans `extraRodIds` de la config.
 
 **Attention** : les Poke Cannes Cobblemon peuvent jouer un son de touche
-different de `entity.fishing_bobber.splash`. Si la detection par son ne mord pas,
-activer `debugSounds` dans la config : chaque son joue a moins de 8 blocs du
-bouchon est affiche dans le chat, ce qui donne l'id reel a hardcoder.
-En attendant, la detection par vitesse prend le relais.
+different de `entity.fishing_bobber.splash`. Voir le mode diagnostic ci-dessous.
+
+## Recherche du bouchon
+
+`findBobber()` utilise `player.fishHook` en priorite, et bascule sur un balayage
+des entites du monde (`FishingBobberEntity` dont l'owner est le joueur) si le
+champ est vide — certaines cannes moddees ne le remplissent pas cote client.
+Le HUD diagnostic indique laquelle des deux voies a servi (`via fishHook` /
+`via scan`).
+
+## Mode diagnostic (touche F6)
+
+Affiche en surimpression : id de la canne en main, id/type du bouchon et voie de
+detection, presence dans l'eau, `dy` (delta de position par tick) et `vy`
+(vitesse verticale) instantanes, leurs minimums depuis le lancer, les compteurs
+de ticks, l'etat courant, et les 6 derniers sons joues a moins de 10 blocs du
+bouchon avec leur distance.
+
+Sert a calibrer : les minimums de `dy`/`vy` releves au moment ou le bouchon
+plonge donnent les seuils reels a mettre dans `positionDropThreshold` /
+`velocityThreshold`, et la liste des sons donne l'id de touche a hardcoder.
 
 ## Securites
 

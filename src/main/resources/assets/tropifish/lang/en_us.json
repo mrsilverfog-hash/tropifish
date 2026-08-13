@@ -1,4 +1,5 @@
 {
   "key.tropifish.toggle": "Toggle auto-fishing",
-  "category.tropifish": "TropiFish"
+  "category.tropifish": "TropiFish",
+  "key.tropifish.debug": "Show diagnostics"
 }
