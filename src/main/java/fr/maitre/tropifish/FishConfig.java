@@ -8,6 +8,8 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Config JSON : config/tropifish.json */
 public class FishConfig {
@@ -20,6 +22,15 @@ public class FishConfig {
     public boolean useVelocityFallback = true;
     /** Messages dans le chat lors des activations/coupures. */
     public boolean chatMessages = true;
+    /** Affiche dans le chat tous les sons joues a moins de 8 blocs du bouchon. */
+    public boolean debugSounds = false;
+
+    /**
+     * Identifiants d'objets a traiter comme des cannes, en plus des cannes
+     * vanilla et de toutes les cannes Cobblemon (cobblemon:*_rod).
+     * Exemple : ["autremod:ma_canne"]
+     */
+    public List<String> extraRodIds = new ArrayList<>();
 
     /** Coupe automatiquement quand il reste ce nombre de points de durabilite (0 = jamais). */
     public int minDurability = 15;
@@ -47,6 +58,9 @@ public class FishConfig {
                 try (Reader reader = Files.newBufferedReader(p)) {
                     FishConfig loaded = GSON.fromJson(reader, FishConfig.class);
                     if (loaded != null) {
+                        if (loaded.extraRodIds == null) {
+                            loaded.extraRodIds = new ArrayList<>();
+                        }
                         return loaded;
                     }
                 }

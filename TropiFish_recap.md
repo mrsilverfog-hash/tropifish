@@ -22,6 +22,20 @@ Machine a etats dans `AutoFisher.tick()`, appelee a chaque tick client :
 - **Timeout** : si rien ne mord pendant `timeoutSeconds` (45 par defaut), on
   remonte et on relance (bouchon coince, touche ratee).
 
+## Cannes reconnues
+
+`AutoFisher.isRod()` accepte, sans dependance de compilation sur Cobblemon :
+
+- tout item `instanceof FishingRodItem` (vanilla),
+- tout `cobblemon:*_rod` (Poke Cannes : `roseate_rod`, `poke_rod`, etc.),
+- tout id liste dans `extraRodIds` de la config.
+
+**Attention** : les Poke Cannes Cobblemon peuvent jouer un son de touche
+different de `entity.fishing_bobber.splash`. Si la detection par son ne mord pas,
+activer `debugSounds` dans la config : chaque son joue a moins de 8 blocs du
+bouchon est affiche dans le chat, ce qui donne l'id reel a hardcoder.
+En attendant, la detection par vitesse prend le relais.
+
 ## Securites
 
 - Coupe si aucune canne a peche en main (main ou seconde main).
@@ -32,6 +46,8 @@ Machine a etats dans `AutoFisher.tick()`, appelee a chaque tick client :
 ## Controles
 
 - Touche par defaut : **J** (rebindable dans Options > Commandes > TropiFish).
+  Les messages de chat et le HUD affichent la touche reellement assignee
+  via `TropiFishClient.getToggleKeyName()` — ne jamais hardcoder "J".
 - HUD en haut a gauche : etat courant + compteur de prises.
 
 ## Config

@@ -1,6 +1,7 @@
 package fr.maitre.tropifish.mixin;
 
 import fr.maitre.tropifish.AutoFisher;
+import fr.maitre.tropifish.TropiFishClient;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.network.packet.s2c.play.PlaySoundS2CPacket;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,8 +21,16 @@ public class ClientPlayNetworkHandlerMixin {
     @Inject(method = "onPlaySound", at = @At("TAIL"))
     private void tropifish$onPlaySound(PlaySoundS2CPacket packet, CallbackInfo ci) {
         try {
-            if (SPLASH_ID.equals(packet.getSound().value().getId().toString())) {
+            boolean debug = TropiFishClient.config != null && TropiFishClient.config.debugSounds;
+            if (!AutoFisher.isEnabled() && !debug) {
+                return;
+            }
+            String id = packet.getSound().value().getId().toString();
+            if (SPLASH_ID.equals(id)) {
                 AutoFisher.notifySplash(packet.getX(), packet.getY(), packet.getZ());
+            }
+            if (debug) {
+                AutoFisher.notifyDebugSound(id, packet.getX(), packet.getY(), packet.getZ());
             }
         } catch (Exception ignored) {
             // jamais faire planter la boucle reseau

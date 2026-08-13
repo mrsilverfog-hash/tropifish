@@ -3,11 +3,15 @@ package fr.maitre.tropifish;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.projectile.FishingBobberEntity;
+import net.minecraft.item.FishingRodItem;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Random;
 
 /**
@@ -48,6 +52,9 @@ public final class AutoFisher {
     private static volatile double splashY;
     private static volatile double splashZ;
 
+    /** File des sons captes en mode debug, videe dans le tick. */
+    private static final Deque<String> DEBUG_SOUNDS = new ArrayDeque<>();
+
     // ------------------------------------------------------------------
     // API publique
     // ------------------------------------------------------------------
@@ -74,7 +81,8 @@ public final class AutoFisher {
         if (enabled) {
             catches = 0;
             stateLabel = "demarrage";
-            say("\u00a7bTropiFish \u00a7aactive\u00a77 (touche J pour couper)");
+            say("\u00a7bTropiFish \u00a7aactive\u00a77 (touche "
+                    + TropiFishClient.getToggleKeyName() + " pour couper)");
         } else {
             stateLabel = "inactif";
             say("\u00a7bTropiFish \u00a7cdesactive");
@@ -89,11 +97,37 @@ public final class AutoFisher {
         splashFlag = true;
     }
 
+    /** Appele depuis le mixin en mode debug, pour tout son recu. */
+    public static void notifyDebugSound(String id, double x, double y, double z) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.player == null) {
+            return;
+        }
+        FishingBobberEntity bobber = mc.player.fishHook;
+        if (bobber == null) {
+            return;
+        }
+        double dx = bobber.getX() - x;
+        double dy = bobber.getY() - y;
+        double dz = bobber.getZ() - z;
+        double dist2 = dx * dx + dy * dy + dz * dz;
+        if (dist2 > 64.0D) {
+            return;
+        }
+        synchronized (DEBUG_SOUNDS) {
+            if (DEBUG_SOUNDS.size() < 40) {
+                DEBUG_SOUNDS.add(id + " \u00a78(" + String.format("%.1f", Math.sqrt(dist2)) + "m)");
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Boucle principale
     // ------------------------------------------------------------------
 
     public static void tick(MinecraftClient mc) {
+        drainDebugSounds();
+
         if (!enabled) {
             return;
         }
@@ -221,14 +255,52 @@ public final class AutoFisher {
         player.swingHand(hand);
     }
 
+    /**
+     * Reconnait les cannes vanilla ET les Poke Cannes Cobblemon
+     * (cobblemon:roseate_rod, poke_rod, etc.), sans dependance de compilation
+     * sur Cobblemon.
+     */
+    public static boolean isRod(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+        if (stack.getItem() instanceof FishingRodItem) {
+            return true;
+        }
+        Identifier id = Registries.ITEM.getId(stack.getItem());
+        if (TropiFishClient.config.extraRodIds.contains(id.toString())) {
+            return true;
+        }
+        return "cobblemon".equals(id.getNamespace()) && id.getPath().endsWith("_rod");
+    }
+
     private static Hand findRodHand(ClientPlayerEntity player) {
-        if (player.getMainHandStack().isOf(Items.FISHING_ROD)) {
+        if (isRod(player.getMainHandStack())) {
             return Hand.MAIN_HAND;
         }
-        if (player.getOffHandStack().isOf(Items.FISHING_ROD)) {
+        if (isRod(player.getOffHandStack())) {
             return Hand.OFF_HAND;
         }
         return null;
+    }
+
+    private static void drainDebugSounds() {
+        if (!TropiFishClient.config.debugSounds) {
+            synchronized (DEBUG_SOUNDS) {
+                DEBUG_SOUNDS.clear();
+            }
+            return;
+        }
+        while (true) {
+            String entry;
+            synchronized (DEBUG_SOUNDS) {
+                entry = DEBUG_SOUNDS.poll();
+            }
+            if (entry == null) {
+                return;
+            }
+            say("\u00a78[son] \u00a7f" + entry);
+        }
     }
 
     private static void disable(String reason) {

@@ -18,6 +18,17 @@ public class TropiFishClient implements ClientModInitializer {
 
     private static KeyBinding toggleKey;
 
+    /** Nom lisible de la touche actuellement assignee (suit les rebinds). */
+    public static String getToggleKeyName() {
+        if (toggleKey == null) {
+            return "?";
+        }
+        if (toggleKey.isUnbound()) {
+            return "non assignee";
+        }
+        return toggleKey.getBoundKeyLocalizedText().getString();
+    }
+
     @Override
     public void onInitializeClient() {
         config = FishConfig.load();
@@ -45,7 +56,8 @@ public class TropiFishClient implements ClientModInitializer {
                 return;
             }
             String line = "\u00a7bTropiFish \u00a7aON \u00a77| " + AutoFisher.getStateLabel()
-                    + " \u00a77| \u00a7f" + AutoFisher.getCatchCount() + " prises";
+                    + " \u00a77| \u00a7f" + AutoFisher.getCatchCount() + " prises"
+                    + " \u00a78[" + getToggleKeyName() + "]";
             context.drawTextWithShadow(mc.textRenderer, Text.literal(line), 6, 6, 0xFFFFFF);
         });
     }
