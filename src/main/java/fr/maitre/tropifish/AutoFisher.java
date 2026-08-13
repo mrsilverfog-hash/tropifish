@@ -50,10 +50,13 @@ public final class AutoFisher {
     private static boolean reelIsCatch = false;
     private static String stateLabel = "inactif";
 
-    private static volatile boolean splashFlag = false;
-    private static volatile double splashX;
-    private static volatile double splashY;
-    private static volatile double splashZ;
+    private static volatile boolean biteFlag = false;
+    private static volatile double biteX;
+    private static volatile double biteY;
+    private static volatile double biteZ;
+    private static volatile boolean landFlag = false;
+    /** Le bouchon est pose : confirme par le son d'amerrissage ou par isTouchingWater(). */
+    private static boolean landed = false;
 
     // --- suivi du bouchon ---
     private static int trackedBobberId = -1;
@@ -117,11 +120,17 @@ public final class AutoFisher {
 
     /** Appele depuis le mixin pour chaque son recu. */
     public static void notifySound(String id, double x, double y, double z) {
-        if (SPLASH_ID.equals(id)) {
-            splashX = x;
-            splashY = y;
-            splashZ = z;
-            splashFlag = true;
+        FishConfig cfg = TropiFishClient.config;
+        if (cfg != null) {
+            if (cfg.biteSoundIds.contains(id)) {
+                biteX = x;
+                biteY = y;
+                biteZ = z;
+                biteFlag = true;
+            }
+            if (cfg.landSoundIds.contains(id)) {
+                landFlag = true;
+            }
         }
         if (!debug) {
             return;
@@ -150,8 +159,6 @@ public final class AutoFisher {
         }
     }
 
-    public static final String SPLASH_ID = "minecraft:entity.fishing_bobber.splash";
-
     // ------------------------------------------------------------------
     // Boucle principale
     // ------------------------------------------------------------------
@@ -171,6 +178,7 @@ public final class AutoFisher {
         // Le suivi du bouchon tourne aussi en diagnostic seul, mod coupe.
         FishingBobberEntity bobber = findBobber(mc, player);
         updateTracking(bobber);
+        lastInWater = bobber != null && bobber.isTouchingWater();
 
         if (debug) {
             ItemStack main = player.getMainHandStack();
@@ -215,7 +223,9 @@ public final class AutoFisher {
             cooldown = GRACE_TICKS;
             waitTicks = 0;
             settleTicks = 0;
-            splashFlag = false;
+            biteFlag = false;
+            landFlag = false;
+            landed = false;
             resetTracking();
             if (action == Action.REEL && reelIsCatch) {
                 catches++;
@@ -226,6 +236,7 @@ public final class AutoFisher {
         }
 
         if (bobber == null || bobber.isRemoved()) {
+            landed = false;
             stateLabel = "lancer...";
             schedule(Action.CAST, cfg.castMinTicks, cfg.castMaxTicks);
             return;
@@ -234,22 +245,28 @@ public final class AutoFisher {
         waitTicks++;
         stateLabel = "attente";
 
-        // 1) Son d'eclaboussure pres du bouchon
-        if (splashFlag) {
-            splashFlag = false;
-            double dx = bobber.getX() - splashX;
-            double dy = bobber.getY() - splashY;
-            double dz = bobber.getZ() - splashZ;
-            if (dx * dx + dy * dy + dz * dz <= 6.0D) {
+        // Le son d'amerrissage confirme que le bouchon est pose.
+        if (landFlag) {
+            landFlag = false;
+            landed = true;
+            settleTicks = 0;
+        }
+
+        // 1) Son de touche. Cobblemon le joue pres du JOUEUR, pas du bouchon :
+        //    on accepte donc la plus courte des deux distances.
+        if (biteFlag) {
+            biteFlag = false;
+            double radius2 = cfg.biteSoundRadius * cfg.biteSoundRadius;
+            if (squaredDistance(bobber.getX(), bobber.getY(), bobber.getZ()) <= radius2
+                    || squaredDistance(player.getX(), player.getY(), player.getZ()) <= radius2) {
                 bite("son");
                 return;
             }
         }
 
-        boolean inWater = bobber.isTouchingWater();
-        lastInWater = inWater;
-
-        if (inWater) {
+        // Le bouchon Cobblemon ne se declare pas dans l'eau : on se fie au son
+        // d'amerrissage, avec isTouchingWater() en complement pour le vanilla.
+        if (landed || bobber.isTouchingWater()) {
             settleTicks++;
 
             // 2) Chute soudaine de la position (le bouchon plonge)
@@ -267,8 +284,6 @@ public final class AutoFisher {
                 bite("vitesse");
                 return;
             }
-        } else {
-            settleTicks = 0;
         }
 
         // 4) Bouchon coince / touche ratee : on relance
@@ -282,6 +297,13 @@ public final class AutoFisher {
     // ------------------------------------------------------------------
     // Suivi / detection
     // ------------------------------------------------------------------
+
+    private static double squaredDistance(double x, double y, double z) {
+        double dx = x - biteX;
+        double dy = y - biteY;
+        double dz = z - biteZ;
+        return dx * dx + dy * dy + dz * dz;
+    }
 
     private static void bite(String source) {
         reelIsCatch = true;
@@ -371,7 +393,8 @@ public final class AutoFisher {
         lines.add(String.format(Locale.ROOT,
                 "\u00a7emin   \u00a7edy \u00a7f%+.4f  \u00a7evy \u00a7f%+.4f",
                 minDy, minVy));
-        lines.add("\u00a7eticks \u00a7fattente " + waitTicks + "  settle " + settleTicks);
+        lines.add("\u00a7eticks \u00a7fattente " + waitTicks + "  settle " + settleTicks
+                + "  \u00a7epose \u00a7f" + landed);
         lines.add("\u00a7eetat  \u00a7f" + stateLabel);
         synchronized (SOUND_LOG) {
             if (SOUND_LOG.isEmpty()) {
@@ -458,7 +481,9 @@ public final class AutoFisher {
         waitTicks = 0;
         settleTicks = 0;
         reelIsCatch = false;
-        splashFlag = false;
+        biteFlag = false;
+        landFlag = false;
+        landed = false;
         resetTracking();
     }
 

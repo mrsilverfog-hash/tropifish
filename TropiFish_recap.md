@@ -13,12 +13,28 @@ Machine a etats dans `AutoFisher.tick()`, appelee a chaque tick client :
 
 ### Detection de la touche
 
-- **Principale** : mixin sur `ClientPlayNetworkHandler.onPlaySound`, on ecoute
-  `minecraft:entity.fishing_bobber.splash` et on verifie que le son est a moins de
-  ~2.4 blocs du bouchon. Le mixin pose juste un drapeau volatile, tout le reste
-  est traite dans le tick client.
-- **Secours** (`useVelocityFallback`) : bouchon pose dans l'eau depuis >25 ticks
-  et `getVelocity().y < -0.09`. Sert si le son est modifie/masque cote serveur.
+- **Principale** : mixin sur `ClientPlayNetworkHandler.onPlaySound`. Le mixin pose
+  juste un drapeau volatile, tout le reste est traite dans le tick client.
+
+  Sons confirmes en jeu sur Tropimon (releves via le HUD diagnostic) :
+  - touche : `cobblemon:fishing.notification` (le son vanilla
+    `entity.fishing_bobber.splash` n'est **pas** utilise par les Poke Cannes)
+  - amerrissage : `cobblemon:fishing.bobber_land`
+
+  **Important** : Cobblemon joue le son de touche pres du **joueur**, pas du
+  bouchon (releve ~9.8 m du bouchon). Le test de proximite accepte donc la plus
+  courte des deux distances (bouchon ou joueur), rayon `biteSoundRadius` = 24.
+
+  Les deux listes sont dans la config (`biteSoundIds`, `landSoundIds`) pour
+  pouvoir en ajouter sans rebuild.
+- **Secours** : bouchon pose depuis plus de `settleTicksRequired` ticks, puis
+  chute de position (`usePositionFallback`, `lastDy < -positionDropThreshold`) ou
+  vitesse verticale negative (`useVelocityFallback`, `vy < -velocityThreshold`).
+
+  **Important** : le bouchon Cobblemon (`cobblemon:poke_bobber`) renvoie
+  `isTouchingWater() == false` alors qu'il flotte bien. L'etat "pose" vient donc
+  du son d'amerrissage (`landed`), avec `isTouchingWater()` en complement pour le
+  vanilla — ne jamais rebrancher les secours sur `isTouchingWater()` seul.
 - **Timeout** : si rien ne mord pendant `timeoutSeconds` (45 par defaut), on
   remonte et on relance (bouchon coince, touche ratee).
 

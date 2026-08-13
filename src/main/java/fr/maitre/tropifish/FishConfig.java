@@ -23,6 +23,24 @@ public class FishConfig {
     /** Detection de secours basee sur la chute de position du bouchon. */
     public boolean usePositionFallback = true;
 
+    /**
+     * Sons qui signalent une touche. Cobblemon utilise son propre son au lieu
+     * du son vanilla, et le joue pres du joueur plutot que pres du bouchon.
+     */
+    public List<String> biteSoundIds = new ArrayList<>(List.of(
+            "minecraft:entity.fishing_bobber.splash",
+            "cobblemon:fishing.notification"
+    ));
+
+    /** Sons qui signalent que le bouchon vient de se poser sur l'eau. */
+    public List<String> landSoundIds = new ArrayList<>(List.of(
+            "cobblemon:fishing.bobber_land",
+            "minecraft:entity.bobber.throw"
+    ));
+
+    /** Rayon (blocs) autour du bouchon OU du joueur pour accepter un son de touche. */
+    public double biteSoundRadius = 24.0D;
+
     /** Ticks pose dans l'eau avant d'autoriser les detections de secours. */
     public int settleTicksRequired = 20;
     /** Chute de position (blocs/tick) au-dela de laquelle on considere une touche. */
@@ -64,8 +82,18 @@ public class FishConfig {
                 try (Reader reader = Files.newBufferedReader(p)) {
                     FishConfig loaded = GSON.fromJson(reader, FishConfig.class);
                     if (loaded != null) {
+                        FishConfig defaults = new FishConfig();
                         if (loaded.extraRodIds == null) {
                             loaded.extraRodIds = new ArrayList<>();
+                        }
+                        if (loaded.biteSoundIds == null || loaded.biteSoundIds.isEmpty()) {
+                            loaded.biteSoundIds = defaults.biteSoundIds;
+                        }
+                        if (loaded.landSoundIds == null || loaded.landSoundIds.isEmpty()) {
+                            loaded.landSoundIds = defaults.landSoundIds;
+                        }
+                        if (loaded.biteSoundRadius <= 0.0D) {
+                            loaded.biteSoundRadius = defaults.biteSoundRadius;
                         }
                         return loaded;
                     }
