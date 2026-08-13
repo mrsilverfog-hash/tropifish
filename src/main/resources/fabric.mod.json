@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "tropifish",
+  "version": "${version}",
+  "name": "TropiFish",
+  "description": "Peche automatique cote client : lance, detecte la touche et remonte tout seul.",
+  "authors": ["Maitre"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["fr.maitre.tropifish.TropiFishClient"]
+  },
+  "mixins": [
+    {
+      "config": "tropifish.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
