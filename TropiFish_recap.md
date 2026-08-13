@@ -57,7 +57,11 @@ champ est vide — certaines cannes moddees ne le remplissent pas cote client.
 Le HUD diagnostic indique laquelle des deux voies a servi (`via fishHook` /
 `via scan`).
 
-## Mode diagnostic (touche F6)
+## Mode diagnostic (touche NON ASSIGNEE par defaut)
+
+Desactive de base depuis la 1.1.0 : le mod fonctionne, l'overlay n'a plus lieu
+d'etre en jeu courant. Pour le reactiver, assigner une touche a
+"Afficher le diagnostic" dans Options > Commandes > TropiFish.
 
 Affiche en surimpression : id de la canne en main, id/type du bouchon et voie de
 detection, presence dans l'eau, `dy` (delta de position par tick) et `vy`
@@ -78,7 +82,10 @@ plonge donnent les seuils reels a mettre dans `positionDropThreshold` /
 
 ## Controles
 
-- Touche par defaut : **J** (rebindable dans Options > Commandes > TropiFish).
+- Peche auto : **J** par defaut (l'utilisateur l'a rebindee sur **F4**).
+- Diagnostic : **non assignee** par defaut.
+- Rebindables dans Options > Commandes > TropiFish.
+- Pour masquer aussi la ligne d'etat : `hudEnabled: false` dans la config.
   Les messages de chat et le HUD affichent la touche reellement assignee
   via `TropiFishClient.getToggleKeyName()` — ne jamais hardcoder "J".
 - HUD en haut a gauche : etat courant + compteur de prises.

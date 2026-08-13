@@ -51,10 +51,12 @@ public class TropiFishClient implements ClientModInitializer {
                 "category.tropifish"
         ));
 
+        // Non assignee par defaut : outil de diagnostic uniquement.
+        // A rebinder dans Options > Commandes > TropiFish si besoin.
         debugKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.tropifish.debug",
                 InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_F6,
+                GLFW.GLFW_KEY_UNKNOWN,
                 "category.tropifish"
         ));
 
