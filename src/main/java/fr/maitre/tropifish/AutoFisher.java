@@ -3,6 +3,7 @@ package fr.maitre.tropifish;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.FishingBobberEntity;
 import net.minecraft.item.FishingRodItem;
 import net.minecraft.item.ItemStack;
@@ -37,6 +38,9 @@ public final class AutoFisher {
     /** Ticks de securite apres chaque clic droit, le temps que le serveur reponde. */
     private static final int GRACE_TICKS = 8;
 
+    /** Marge de tolerance (blocs) sur la comparaison de distance entre joueurs. */
+    private static final double OWNER_MARGIN = 0.05D;
+
     private static boolean enabled = false;
     private static boolean debug = false;
 
@@ -55,8 +59,14 @@ public final class AutoFisher {
     private static volatile double biteY;
     private static volatile double biteZ;
     private static volatile boolean landFlag = false;
+    private static volatile double landX;
+    private static volatile double landY;
+    private static volatile double landZ;
     /** Le bouchon est pose : confirme par le son d'amerrissage ou par isTouchingWater(). */
     private static boolean landed = false;
+
+    /** Fenetre de confirmation par plongee du bouchon (option requireDipConfirm). */
+    private static int confirmTicks = 0;
 
     // --- suivi du bouchon ---
     private static int trackedBobberId = -1;
@@ -71,6 +81,8 @@ public final class AutoFisher {
     private static String lastHookId = "-";
     private static String lastHookSource = "-";
     private static boolean lastInWater = false;
+    private static String lastReject = "-";
+    private static int rejectedSounds = 0;
 
     // ------------------------------------------------------------------
     // API publique
@@ -109,6 +121,8 @@ public final class AutoFisher {
         resetState();
         if (enabled) {
             catches = 0;
+            rejectedSounds = 0;
+            lastReject = "-";
             stateLabel = "demarrage";
             say("\u00a7bTropiFish \u00a7aactive\u00a77 (touche "
                     + TropiFishClient.getToggleKeyName() + " pour couper)");
@@ -118,7 +132,7 @@ public final class AutoFisher {
         }
     }
 
-    /** Appele depuis le mixin pour chaque son recu. */
+    /** Appele depuis le mixin pour chaque son recu. Ne fait que poser un drapeau. */
     public static void notifySound(String id, double x, double y, double z) {
         FishConfig cfg = TropiFishClient.config;
         if (cfg != null) {
@@ -129,6 +143,9 @@ public final class AutoFisher {
                 biteFlag = true;
             }
             if (cfg.landSoundIds.contains(id)) {
+                landX = x;
+                landY = y;
+                landZ = z;
                 landFlag = true;
             }
         }
@@ -139,18 +156,16 @@ public final class AutoFisher {
         if (mc.player == null) {
             return;
         }
+        double dPlayer = distance(mc.player.getX(), mc.player.getY(), mc.player.getZ(), x, y, z);
         FishingBobberEntity bobber = findBobber(mc, mc.player);
-        if (bobber == null) {
+        double dBobber = bobber == null ? -1.0D
+                : distance(bobber.getX(), bobber.getY(), bobber.getZ(), x, y, z);
+        if (dPlayer > 32.0D && (dBobber < 0.0D || dBobber > 32.0D)) {
             return;
         }
-        double dx = bobber.getX() - x;
-        double dy = bobber.getY() - y;
-        double dz = bobber.getZ() - z;
-        double dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 > 100.0D) {
-            return;
-        }
-        String line = String.format(Locale.ROOT, "%s (%.1fm)", id, Math.sqrt(dist2));
+        String line = dBobber < 0.0D
+                ? String.format(Locale.ROOT, "%s (moi %.1fm)", id, dPlayer)
+                : String.format(Locale.ROOT, "%s (moi %.1fm / bouchon %.1fm)", id, dPlayer, dBobber);
         synchronized (SOUND_LOG) {
             SOUND_LOG.addFirst(line);
             while (SOUND_LOG.size() > 6) {
@@ -223,6 +238,7 @@ public final class AutoFisher {
             cooldown = GRACE_TICKS;
             waitTicks = 0;
             settleTicks = 0;
+            confirmTicks = 0;
             biteFlag = false;
             landFlag = false;
             landed = false;
@@ -237,6 +253,9 @@ public final class AutoFisher {
 
         if (bobber == null || bobber.isRemoved()) {
             landed = false;
+            confirmTicks = 0;
+            biteFlag = false;
+            landFlag = false;
             stateLabel = "lancer...";
             schedule(Action.CAST, cfg.castMinTicks, cfg.castMaxTicks);
             return;
@@ -245,22 +264,47 @@ public final class AutoFisher {
         waitTicks++;
         stateLabel = "attente";
 
-        // Le son d'amerrissage confirme que le bouchon est pose.
+        // Le son d'amerrissage confirme que le bouchon est pose - mais
+        // seulement si c'est MON bouchon qui vient de se poser.
         if (landFlag) {
             landFlag = false;
-            landed = true;
-            settleTicks = 0;
+            if (soundIsMine(mc, player, bobber, landX, landY, landZ,
+                    cfg.landSoundRadius, cfg.landSoundRadius, cfg, "amerrissage")) {
+                landed = true;
+                settleTicks = 0;
+            }
         }
 
-        // 1) Son de touche. Cobblemon le joue pres du JOUEUR, pas du bouchon :
-        //    on accepte donc la plus courte des deux distances.
+        // 1) Son de touche. Cobblemon le joue pres du JOUEUR proprietaire de la
+        //    canne : on exige un son proche de moi (ou de mon bouchon) et dont
+        //    aucun autre joueur ne soit plus proche.
         if (biteFlag) {
             biteFlag = false;
-            double radius2 = cfg.biteSoundRadius * cfg.biteSoundRadius;
-            if (squaredDistance(bobber.getX(), bobber.getY(), bobber.getZ()) <= radius2
-                    || squaredDistance(player.getX(), player.getY(), player.getZ()) <= radius2) {
-                bite("son");
+            if (waitTicks < cfg.minTicksBeforeBite) {
+                reject("trop tot apres le lancer");
+            } else if (soundIsMine(mc, player, bobber, biteX, biteY, biteZ,
+                    cfg.biteSoundPlayerRadius, cfg.biteSoundBobberRadius, cfg, "touche")) {
+                if (cfg.requireDipConfirm) {
+                    confirmTicks = Math.max(1, cfg.dipConfirmTicks);
+                    stateLabel = "touche ? (confirmation)";
+                } else {
+                    bite("son");
+                    return;
+                }
+            }
+        }
+
+        // 1b) Fenetre de confirmation : le son ne vaut que si MON bouchon plonge.
+        if (confirmTicks > 0) {
+            if (lastDy < -cfg.positionDropThreshold
+                    || bobber.getVelocity().y < -cfg.velocityThreshold) {
+                confirmTicks = 0;
+                bite("son+plongee");
                 return;
+            }
+            confirmTicks--;
+            if (confirmTicks == 0) {
+                reject("son sans plongee du bouchon");
             }
         }
 
@@ -269,17 +313,20 @@ public final class AutoFisher {
         if (landed || bobber.isTouchingWater()) {
             settleTicks++;
 
+            // Secours desarmes par defaut : l'agitation de l'eau (Pokemon, joueur
+            // qui saute) suffisait a franchir les seuils. Quand ils sont
+            // reactives, ils n'entrent en jeu qu'apres fallbackArmAfterSeconds.
+            boolean armed = settleTicks > cfg.settleTicksRequired
+                    && waitTicks > cfg.fallbackArmAfterSeconds * 20;
+
             // 2) Chute soudaine de la position (le bouchon plonge)
-            if (cfg.usePositionFallback
-                    && settleTicks > cfg.settleTicksRequired
-                    && lastDy < -cfg.positionDropThreshold) {
+            if (cfg.usePositionFallback && armed && lastDy < -cfg.positionDropThreshold) {
                 bite("position");
                 return;
             }
 
             // 3) Vitesse negative envoyee par le serveur
-            if (cfg.useVelocityFallback
-                    && settleTicks > cfg.settleTicksRequired
+            if (cfg.useVelocityFallback && armed
                     && bobber.getVelocity().y < -cfg.velocityThreshold) {
                 bite("vitesse");
                 return;
@@ -289,21 +336,71 @@ public final class AutoFisher {
         // 4) Bouchon coince / touche ratee : on relance
         if (waitTicks > cfg.timeoutSeconds * 20) {
             reelIsCatch = false;
+            confirmTicks = 0;
             stateLabel = "relance (timeout)";
             schedule(Action.REEL, 1, 3);
         }
     }
 
     // ------------------------------------------------------------------
-    // Suivi / detection
+    // Filtrage des sons
     // ------------------------------------------------------------------
 
-    private static double squaredDistance(double x, double y, double z) {
-        double dx = x - biteX;
-        double dy = y - biteY;
-        double dz = z - biteZ;
-        return dx * dx + dy * dy + dz * dz;
+    /**
+     * Un son m'appartient si :
+     * - il est assez proche de moi OU de mon bouchon,
+     * - et aucun autre joueur n'en est plus proche que moi.
+     * Le second test est ce qui distingue ma touche de celle du voisin quand il
+     * peche a cote : Cobblemon joue la notification a la position du
+     * proprietaire de la canne.
+     */
+    private static boolean soundIsMine(MinecraftClient mc, ClientPlayerEntity player,
+                                       FishingBobberEntity bobber,
+                                       double sx, double sy, double sz,
+                                       double playerRadius, double bobberRadius,
+                                       FishConfig cfg, String kind) {
+        double dPlayer = distance(player.getX(), player.getY(), player.getZ(), sx, sy, sz);
+        double dBobber = bobber == null ? Double.MAX_VALUE
+                : distance(bobber.getX(), bobber.getY(), bobber.getZ(), sx, sy, sz);
+
+        if (dPlayer > playerRadius && dBobber > bobberRadius) {
+            reject(String.format(Locale.ROOT, "%s trop loin (moi %.1fm)", kind, dPlayer));
+            return false;
+        }
+
+        if (cfg.rejectSoundIfCloserToOtherPlayer && mc.world != null) {
+            double mine = Math.min(dPlayer, dBobber);
+            for (PlayerEntity other : mc.world.getPlayers()) {
+                if (other == player) {
+                    continue;
+                }
+                double d = distance(other.getX(), other.getY(), other.getZ(), sx, sy, sz);
+                if (d < mine - OWNER_MARGIN) {
+                    reject(String.format(Locale.ROOT, "%s de %s (%.1fm)",
+                            kind, other.getName().getString(), d));
+                    return false;
+                }
+            }
+        }
+        return true;
     }
+
+    private static void reject(String reason) {
+        rejectedSounds++;
+        lastReject = reason;
+    }
+
+    private static double distance(double ax, double ay, double az,
+                                   double bx, double by, double bz) {
+        double dx = ax - bx;
+        double dy = ay - by;
+        double dz = az - bz;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    // ------------------------------------------------------------------
+    // Suivi / detection
+    // ------------------------------------------------------------------
 
     private static void bite(String source) {
         reelIsCatch = true;
@@ -394,11 +491,13 @@ public final class AutoFisher {
                 "\u00a7emin   \u00a7edy \u00a7f%+.4f  \u00a7evy \u00a7f%+.4f",
                 minDy, minVy));
         lines.add("\u00a7eticks \u00a7fattente " + waitTicks + "  settle " + settleTicks
-                + "  \u00a7epose \u00a7f" + landed);
+                + "  \u00a7epose \u00a7f" + landed
+                + "  \u00a7econfirm \u00a7f" + confirmTicks);
         lines.add("\u00a7eetat  \u00a7f" + stateLabel);
+        lines.add("\u00a7erejets \u00a7f" + rejectedSounds + " \u00a78| " + lastReject);
         synchronized (SOUND_LOG) {
             if (SOUND_LOG.isEmpty()) {
-                lines.add("\u00a78(aucun son capte pres du bouchon)");
+                lines.add("\u00a78(aucun son capte a proximite)");
             } else {
                 for (String s : SOUND_LOG) {
                     lines.add("\u00a7b> \u00a7f" + s);
@@ -480,6 +579,7 @@ public final class AutoFisher {
         cooldown = 0;
         waitTicks = 0;
         settleTicks = 0;
+        confirmTicks = 0;
         reelIsCatch = false;
         biteFlag = false;
         landFlag = false;

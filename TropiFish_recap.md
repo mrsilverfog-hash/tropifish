@@ -21,22 +21,55 @@ Machine a etats dans `AutoFisher.tick()`, appelee a chaque tick client :
     `entity.fishing_bobber.splash` n'est **pas** utilise par les Poke Cannes)
   - amerrissage : `cobblemon:fishing.bobber_land`
 
-  **Important** : Cobblemon joue le son de touche pres du **joueur**, pas du
-  bouchon (releve ~9.8 m du bouchon). Le test de proximite accepte donc la plus
-  courte des deux distances (bouchon ou joueur), rayon `biteSoundRadius` = 24.
+  **Important** : Cobblemon joue le son de touche a la position du **joueur**
+  proprietaire de la canne, pas du bouchon (releve ~9.8 m du bouchon).
 
-  Les deux listes sont dans la config (`biteSoundIds`, `landSoundIds`) pour
-  pouvoir en ajouter sans rebuild.
-- **Secours** : bouchon pose depuis plus de `settleTicksRequired` ticks, puis
-  chute de position (`usePositionFallback`, `lastDy < -positionDropThreshold`) ou
-  vitesse verticale negative (`useVelocityFallback`, `vy < -velocityThreshold`).
+#### Filtrage anti faux positifs (v2)
 
-  **Important** : le bouchon Cobblemon (`cobblemon:poke_bobber`) renvoie
-  `isTouchingWater() == false` alors qu'il flotte bien. L'etat "pose" vient donc
-  du son d'amerrissage (`landed`), avec `isTouchingWater()` en complement pour le
-  vanilla — ne jamais rebrancher les secours sur `isTouchingWater()` seul.
+Le son est diffuse a tous les clients : sans filtre, la touche d'un voisin
+declenchait la canne. Trois gardes cumulees dans `soundIsMine()` :
+
+1. **Distance** : le son doit tomber a moins de `biteSoundPlayerRadius` (4 blocs)
+   de moi **ou** `biteSoundBobberRadius` (4 blocs) de mon bouchon. L'ancien
+   rayon unique de 24 blocs etait la cause n°1 des faux positifs.
+2. **Proprietaire** : `rejectSoundIfCloserToOtherPlayer` rejette le son si un
+   autre joueur en est plus proche que moi (ou que mon bouchon). C'est le filtre
+   decisif quand quelqu'un peche colle a moi, puisque le son part de *sa*
+   position.
+3. **Chronologie** : `minTicksBeforeBite` (15) ignore un son arrive trop tot
+   apres le lancer.
+
+Option `requireDipConfirm` (false par defaut) : n'accepte le son que si mon
+bouchon plonge reellement dans les `dipConfirmTicks` suivants. A activer si des
+faux positifs subsistent — mais si le bouchon Cobblemon ne bouge pas a la
+touche, cette option bloque toutes les prises.
+
+Le son d'amerrissage passe par le meme filtre (`landSoundRadius`), sinon le
+lancer d'un voisin remettait `landed`/`settleTicks` a zero chez moi.
+
+#### Secours (desactives par defaut depuis la v2)
+
+`usePositionFallback` / `useVelocityFallback` : chute de position
+(`lastDy < -positionDropThreshold`) ou vitesse verticale negative
+(`vy < -velocityThreshold`). **Cause n°2 des faux positifs** : l'agitation de
+l'eau (Pokemon qui nage, joueur qui saute) faisait osciller le bouchon au-dela
+des anciens seuils (0.035 / 0.09). Desormais off par defaut, seuils releves a
+0.08 / 0.15, et armes seulement apres `fallbackArmAfterSeconds` (15 s) en plus
+de `settleTicksRequired`.
+
+**Important** : le bouchon Cobblemon (`cobblemon:poke_bobber`) renvoie
+`isTouchingWater() == false` alors qu'il flotte bien. L'etat "pose" vient donc
+du son d'amerrissage (`landed`), avec `isTouchingWater()` en complement pour le
+vanilla — ne jamais rebrancher les secours sur `isTouchingWater()` seul.
+
 - **Timeout** : si rien ne mord pendant `timeoutSeconds` (45 par defaut), on
   remonte et on relance (bouchon coince, touche ratee).
+
+#### Migration de config
+
+`FishConfig.load()` lit d'abord le JSON brut : si `configVersion` est absent ou
+< 2, les reglages anti faux positifs sont forces et le fichier est reecrit.
+Sans ca, l'ancien `config/tropifish.json` sur le disque annulerait le correctif.
 
 ## Cannes reconnues
 
@@ -66,8 +99,8 @@ d'etre en jeu courant. Pour le reactiver, assigner une touche a
 Affiche en surimpression : id de la canne en main, id/type du bouchon et voie de
 detection, presence dans l'eau, `dy` (delta de position par tick) et `vy`
 (vitesse verticale) instantanes, leurs minimums depuis le lancer, les compteurs
-de ticks, l'etat courant, et les 6 derniers sons joues a moins de 10 blocs du
-bouchon avec leur distance.
+de ticks, l'etat courant, le nombre de sons rejetes avec le motif du dernier
+rejet, et les 6 derniers sons proches avec leur distance a moi et au bouchon.
 
 Sert a calibrer : les minimums de `dy`/`vy` releves au moment ou le bouchon
 plonge donnent les seuils reels a mettre dans `positionDropThreshold` /
